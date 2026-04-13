@@ -4,7 +4,8 @@ import {
   Bot, Terminal, RefreshCw, Sparkles, FolderSync,
   GitBranch, GitCommit, CheckCircle, XCircle, Clock,
   Code, Database, Cpu, Activity, AlertTriangle, Zap,
-  Wifi, WifiOff, Copy, ClipboardCheck
+  Wifi, WifiOff, Copy, ClipboardCheck, ShieldCheck,
+  ListTodo, ChevronDown, ChevronUp
 } from 'lucide-react';
 import './index.css';
 
@@ -12,20 +13,30 @@ const API = "http://localhost:5000";
 const REPOS = (process.env.REACT_APP_GITHUB_REPOS || "")
   .split(',').map(r => r.trim()).filter(Boolean);
 
-/* ── Sub-Components ─────────────────────────────────── */
+/* ── Helpers ─────────────────────────────────────────── */
 function StatusBadge({ status }) {
   const map = {
     'in-progress': { label: 'Running', cls: 'badge-running' },
-    'completed': { label: 'Done', cls: 'badge-success' },
-    'failed': { label: 'Failed', cls: 'badge-error' },
+    'completed':   { label: 'Done',    cls: 'badge-success' },
+    'failed':      { label: 'Failed',  cls: 'badge-error' },
   };
   const { label, cls } = map[status] || { label: status, cls: 'badge-pending' };
   return <span className={`badge ${cls}`}>{label}</span>;
 }
 
+function RiskBadge({ level }) {
+  const map = {
+    low:    { label: '🟢 Low',    cls: 'badge-success' },
+    medium: { label: '🟡 Medium', cls: 'badge-pending' },
+    high:   { label: '🔴 High',   cls: 'badge-error' },
+  };
+  const { label, cls } = map[level] || { label: level, cls: 'badge-pending' };
+  return <span className={`badge ${cls}`} style={{ fontSize: '0.7rem' }}>{label}</span>;
+}
+
 function RepoCard({ repo, isActive }) {
   const parts = repo.split('/');
-  const name = parts[1] || repo;
+  const name  = parts[1] || repo;
   const owner = parts[0] || '';
   return (
     <div className={`repo-card ${isActive ? 'repo-card-active' : ''}`}>
@@ -58,28 +69,106 @@ function StatCard({ icon: Icon, label, value, color }) {
   );
 }
 
+/* ── Task Plan Panel ─────────────────────────────────── */
+function TaskPlanPanel({ logs }) {
+  const [expanded, setExpanded] = useState(true);
+  const taskLogs = logs.filter(l => l.message && l.message.match(/\[\d+\] \[/));
+
+  if (taskLogs.length === 0) return null;
+
+  const typeColors = {
+    bug_fix:  '#f85149',
+    refactor: '#d29922',
+    feature:  '#3fb950',
+    docs:     '#58a6ff',
+    test:     '#bc8cff',
+  };
+
+  return (
+    <div style={{ border: '1px solid var(--panel-border)', borderRadius: 10, marginBottom: '1rem', overflow: 'hidden' }}>
+      <div
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: '0.5rem',
+          padding: '0.6rem 1rem', cursor: 'pointer',
+          background: 'rgba(88, 166, 255, 0.06)',
+          borderBottom: expanded ? '1px solid var(--panel-border)' : 'none'
+        }}
+      >
+        <ListTodo size={15} color="#58a6ff" />
+        <span style={{ fontSize: '0.85rem', fontWeight: 600, flex: 1, color: '#58a6ff' }}>
+          AI Task Plan ({taskLogs.length} tasks)
+        </span>
+        {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+      </div>
+      {expanded && (
+        <div style={{ padding: '0.75rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+          {taskLogs.map((log, i) => {
+            const match = log.message.match(/\[(\d+)\] \[(\w+)\] (.+?) \((\w+) risk\)/);
+            if (!match) return <div key={i} style={{ fontSize: '0.8rem', opacity: 0.7 }}>{log.message}</div>;
+            const [, priority, type, title, risk] = match;
+            return (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem' }}>
+                <span style={{ color: '#888', minWidth: 20 }}>#{priority}</span>
+                <span style={{
+                  background: typeColors[type] + '22',
+                  color: typeColors[type] || '#aaa',
+                  padding: '1px 6px', borderRadius: 4, fontSize: '0.72rem', fontWeight: 600,
+                  border: `1px solid ${typeColors[type] || '#aaa'}44`
+                }}>{type.replace('_', ' ')}</span>
+                <span style={{ flex: 1, color: 'var(--text-main)' }}>{title}</span>
+                <RiskBadge level={risk} />
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Self-Review indicator in logs ───────────────────── */
+function LogLine({ log }) {
+  const isSelfReview = log.message && log.message.includes('[review:');
+  const isRejected   = log.message && log.message.includes('Self-review rejected');
+
+  const iconMap = {
+    success: <CheckCircle size={13} color="var(--success-color)" />,
+    error:   <XCircle    size={13} color="var(--error-color)"   />,
+    warning: <AlertTriangle size={13} color="var(--warning-color)" />,
+    info:    <span style={{ width: 13 }} />,
+  };
+
+  return (
+    <div className={`log-line log-${log.type || 'info'}`} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.4rem' }}>
+      <span style={{ flexShrink: 0, marginTop: 2 }}>{iconMap[log.type] || iconMap.info}</span>
+      <span style={{ flex: 1 }}>
+        {log.message}
+        {isSelfReview && <ShieldCheck size={11} style={{ marginLeft: 4, verticalAlign: 'middle', color: '#3fb950' }} />}
+        {isRejected   && <ShieldCheck size={11} style={{ marginLeft: 4, verticalAlign: 'middle', color: '#f85149' }} />}
+      </span>
+    </div>
+  );
+}
+
 /* ── Planning Chat ──────────────────────────────────── */
 function PlanningChat({ repository, onResolved, isAgentRunning }) {
-  const [messages, setMessages] = useState([
-    { role: 'assistant', content: 'Hello! I am your code planning assistant. What would you like me to improve in this repository? I can help clarify your requirements before we start.' }
+  const [messages, setMessages]   = useState([
+    { role: 'assistant', content: 'Hello! I am your Quantum AI Agent. Tell me what to improve and I will handle everything — plan, code, review, and PR.' }
   ]);
-  const [input, setInput] = useState('');
-  const [chatId, setChatId] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [input, setInput]         = useState('');
+  const [chatId, setChatId]       = useState(null);
+  const [loading, setLoading]     = useState(false);
   const [resolvedPlan, setResolvedPlan] = useState(null);
-  const chatEndRef = useRef(null);
+  const bottomRef                 = useRef(null);
 
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
-  const handleSend = async (e) => {
-    e.preventDefault();
+  const send = useCallback(async () => {
     if (!input.trim() || loading) return;
-
     const userMsg = input.trim();
     setInput('');
-    setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+    setMessages(m => [...m, { role: 'user', content: userMsg }]);
     setLoading(true);
 
     try {
@@ -89,56 +178,58 @@ function PlanningChat({ repository, onResolved, isAgentRunning }) {
         body: JSON.stringify({ repository, message: userMsg, chatId }),
       });
       const data = await res.json();
-      if (data.messages) {
-        setChatId(data._id);
-        setMessages(data.messages);
-        if (data.status === 'resolved') {
-          setResolvedPlan(data.resolvedInstructions);
-        }
-      } else if (data.error) {
-        throw new Error(data.error);
+      setChatId(data._id);
+
+      const lastMsg = data.messages[data.messages.length - 1];
+      setMessages(m => [...m, { role: 'assistant', content: lastMsg?.content || '...' }]);
+
+      if (data.status === 'resolved' && data.resolvedInstructions) {
+        setResolvedPlan(data.resolvedInstructions);
       }
-    } catch (err) {
-      setMessages(prev => [...prev, { role: 'assistant', content: "Error: " + err.message }]);
+    } catch (e) {
+      setMessages(m => [...m, { role: 'assistant', content: `Error: ${e.message}` }]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [input, loading, chatId, repository]);
 
   return (
-    <div className="chat-section">
+    <div>
       <div className="chat-container">
         <div className="chat-messages">
-          {Array.isArray(messages) && messages.map((m, i) => (
+          {messages.map((m, i) => (
             <div key={i} className={`chat-bubble ${m.role}`}>
-              {m.content.replace('[PLAN_READY]', '')}
+              {m.content}
             </div>
           ))}
-          {loading && <div className="chat-bubble assistant">Thinking...</div>}
-          <div ref={chatEndRef} />
+          {loading && <div className="chat-bubble assistant"><span className="loader" /></div>}
+          <div ref={bottomRef} />
         </div>
-        <form className="chat-input-area" onSubmit={handleSend}>
+        <div className="chat-input-area">
           <input
             className="chat-input"
-            placeholder="Type your requirements..."
+            placeholder="e.g. Fix all bugs and add error handling..."
             value={input}
             onChange={e => setInput(e.target.value)}
-            disabled={loading}
+            onKeyDown={e => e.key === 'Enter' && send()}
+            disabled={loading || isAgentRunning}
           />
-          <button type="submit" className="chat-send-btn" disabled={loading || !input.trim()}>
-            Send
+          <button className="fetch-btn chat-send-btn" onClick={send} disabled={loading || isAgentRunning}>
+            {loading ? <span className="loader" /> : <Sparkles size={14} />}
           </button>
-        </form>
+        </div>
       </div>
 
       {resolvedPlan && !isAgentRunning && (
         <div className="plan-ready-banner">
-          <div>
-            <b>Plan Clarified!</b>
-            <p>{resolvedPlan.substring(0, 100)}...</p>
-          </div>
-          <button onClick={() => onResolved(resolvedPlan)}>
-            <Sparkles size={16} /> Start Agent Execution
+          <b>✅ Plan ready — Agent will run fully autonomously</b>
+          <div style={{ fontSize: '0.8rem', opacity: 0.85 }}>{resolvedPlan}</div>
+          <button
+            className="fetch-btn"
+            style={{ alignSelf: 'flex-start', marginTop: '0.25rem' }}
+            onClick={() => onResolved(resolvedPlan)}
+          >
+            <Zap size={13} /> Launch Autonomous Agent
           </button>
         </div>
       )}
@@ -146,301 +237,344 @@ function PlanningChat({ repository, onResolved, isAgentRunning }) {
   );
 }
 
-/* ── Main App ───────────────────────────────────────── */
-export default function App() {
-  const [logs, setLogs] = useState([]);
-  const [isRunning, setIsRunning] = useState(false);
-  const [connected, setConnected] = useState(false);
-  const [jobs, setJobs] = useState([]);
-  const [activeRepo, setActiveRepo] = useState(null);
-  const [stats, setStats] = useState({ total: 0, completed: 0, prs: 0 });
-  const [copied, setCopied] = useState(false);
-  const [selectedRepo, setSelectedRepo] = useState(REPOS[0] || null);
-  const logsEndRef = useRef(null);
+/* ── Job Detail Panel ────────────────────────────────── */
+function JobDetail({ jobId }) {
+  const [job, setJob]       = useState(null);
+  const [logs, setLogs]     = useState([]);
+  const [loading, setLoading] = useState(true);
+  const terminalRef           = useRef(null);
 
-  /* Auto-scroll terminal (only if user is already at bottom) */
+  const fetchDetails = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/api/agent/jobs/${jobId}`);
+      const data = await res.json();
+      setJob(data.job);
+      setLogs(data.logs || []);
+    } catch { /* ignore */ } finally {
+      setLoading(false);
+    }
+  }, [jobId]);
+
+  useEffect(() => { fetchDetails(); }, [fetchDetails]);
+
+  // Live logs via socket
   useEffect(() => {
-    if (!logsEndRef.current) return;
-    const container = logsEndRef.current.parentElement;
-    if (!container) return;
+    const socket = io(API);
+    socket.on(`agent-status-${jobId}`, (payload) => {
+      setLogs(prev => [...prev, payload]);
+    });
+    return () => socket.disconnect();
+  }, [jobId]);
 
-    // Is the user currently at the bottom (within 100px)? 
-    // Increased threshold for reliability
-    const isAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 100;
-
-    // Always scroll on the very first log, otherwise only if they were at bottom
-    if (logs.length === 1 || isAtBottom) {
-      logsEndRef.current.scrollIntoView({ behavior: 'auto' });
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
     }
   }, [logs]);
 
-  /* Fetch job history */
+  const copyLogs = useCallback(() => {
+    const text = logs.map(l => `[${l.type?.toUpperCase()}] ${l.message}`).join('\n');
+    navigator.clipboard.writeText(text);
+  }, [logs]);
+
+  if (loading) return <div style={{ padding: '1rem', color: 'var(--text-muted)' }}>Loading job details...</div>;
+  if (!job) return <div style={{ padding: '1rem', color: 'var(--error-color)' }}>Job not found.</div>;
+
+  const modifiedCount = logs.filter(l => l.type === 'success' && l.message?.startsWith('  ✓ Updated:')).length;
+  const selfReviewCount = logs.filter(l => l.message?.includes('[review:')).length;
+
+  return (
+    <div>
+      <div className="stats-row" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: '1rem' }}>
+        <StatCard icon={Activity}    label="Status"   value={job.status}        color="#58a6ff" />
+        <StatCard icon={GitCommit}   label="Modified" value={modifiedCount}     color="#3fb950" />
+        <StatCard icon={ShieldCheck} label="Reviewed" value={selfReviewCount}   color="#bc8cff" />
+        <StatCard icon={Terminal}    label="Log Lines" value={logs.length}      color="#d29922" />
+      </div>
+
+      <TaskPlanPanel logs={logs} />
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Live terminal</span>
+        <button className="clear-btn" onClick={copyLogs} title="Copy all logs">
+          <Copy size={11} /> Copy
+        </button>
+      </div>
+
+      <div ref={terminalRef} className="terminal-output" style={{ maxHeight: 380, overflowY: 'auto' }}>
+        {logs.length === 0 ? (
+          <div className="terminal-placeholder">
+            <Terminal size={28} opacity={0.3} />
+            <span>No logs yet...</span>
+          </div>
+        ) : (
+          logs.map((log, i) => <LogLine key={i} log={log} />)
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Main App ─────────────────────────────────────────── */
+export default function App() {
+  const [jobs, setJobs]             = useState([]);
+  const [activeJobId, setActiveJobId] = useState(null);
+  const [selectedRepo, setSelectedRepo] = useState(REPOS[0] || '');
+  const [customRepo, setCustomRepo] = useState('');
+  const [isRunning, setIsRunning]   = useState(false);
+  const [connected, setConnected]   = useState(false);
+  const [globalLogs, setGlobalLogs] = useState([]);
+  const [view, setView]             = useState('dashboard'); // 'dashboard' | 'job'
+  const socketRef                   = useRef(null);
+
+  // Socket connection
+  useEffect(() => {
+    const socket = io(API);
+    socketRef.current = socket;
+    socket.on('connect',    () => setConnected(true));
+    socket.on('disconnect', () => setConnected(false));
+    socket.on('global-activity', (payload) => {
+      setGlobalLogs(prev => [payload, ...prev].slice(0, 50));
+    });
+    return () => socket.disconnect();
+  }, []);
+
   const fetchJobs = useCallback(async () => {
     try {
       const res = await fetch(`${API}/api/agent/jobs`);
       const data = await res.json();
-      setJobs(Array.isArray(data) ? data : []);
-      setStats({
-        total: data.length,
-        completed: data.filter(j => j.status === 'completed').length,
-        prs: data.filter(j => j.tempBranch).length,
-      });
-    } catch { /* backend may not be ready yet */ }
+
+      // ── BUG FIX: Guard against non-array responses (e.g. { error: "..." }
+      // from the backend, or HTML error pages parsed as objects). Without this
+      // check, jobs.filter / jobs.find crash the entire React tree.
+      if (!Array.isArray(data)) {
+        console.warn('[fetchJobs] Expected array but got:', data);
+        return;
+      }
+
+      setJobs(data);
+      const running = data.find(j => j.status === 'in-progress');
+      setIsRunning(!!running);
+      if (running) setActiveJobId(running._id);
+    } catch (err) {
+      console.warn('[fetchJobs] Network error:', err.message);
+    }
   }, []);
 
   useEffect(() => {
     fetchJobs();
-    const t = setInterval(fetchJobs, 10000);
-    return () => clearInterval(t);
+    const interval = setInterval(fetchJobs, 8000);
+    return () => clearInterval(interval);
   }, [fetchJobs]);
 
-  /* Socket.io — always-on global listener */
-  useEffect(() => {
-    const socket = io(API, { reconnection: true, reconnectionDelay: 1000 });
+  const launchAgent = useCallback(async (instructions) => {
+    const repoTarget = customRepo.trim() || selectedRepo;
+    if (!repoTarget) return;
 
-    socket.on('connect', () => setConnected(true));
-    socket.on('disconnect', () => setConnected(false));
+    const [repoOwner, repoName] = repoTarget.includes('github.com')
+      ? (() => { const p = new URL(repoTarget).pathname.replace(/^\//, '').split('/'); return [p[0], p[1]]; })()
+      : repoTarget.split('/');
 
-    socket.on('global-activity', (data) => {
-      const entry = { ...data, timestamp: data.timestamp || new Date().toISOString() };
-
-      setLogs(prev => {
-        const last = prev[prev.length - 1];
-        if (last && last.message === entry.message) return prev;
-        return [...prev, entry];
-      });
-
-
-      /* Detect which repo is active */
-      const parts = entry.message.split('??');
-      if (parts.length >= 2) {
-        const repoMatch = parts[1].trim().match(/([^/\s]+\/[^\s]+)/);
-        if (repoMatch) setActiveRepo(repoMatch[1]);
-      }
-
-      /* Job lifecycle signals */
-      if (entry.message.includes('Agent started')) setIsRunning(true);
-
-      if (entry.message.includes('Job complete')) {
-        setIsRunning(false);
-        setActiveRepo(null);
-        fetchJobs();
-      }
-    });
-
-    return () => socket.disconnect();
-  }, [fetchJobs]);
-
-  /* Manual run trigger */
-  const startAgent = async (finalInstructions) => {
-  setIsRunning(true);
-  setLogs([]);
-  try {
-    const repoUrl = `https://github.com/${selectedRepo}`;
-    const res = await fetch(`${API}/api/analyze`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        repoUrl,
-        instructions: finalInstructions
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to start agent');
-    fetchJobs(); // Immediate refresh
-  } catch (err) {
-    setLogs([{ message: err.message, type: 'error', timestamp: new Date().toISOString() }]);
-    setIsRunning(false);
-  }
-};
-
-  /* Copy terminal logs to clipboard */
-  const copyLogs = async () => {
-    const text = logs
-      .map(l => `[${new Date(l.timestamp).toLocaleTimeString([], { hour12: false })}] ${l.message}`)
-      .join('\n');
     try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      /* clipboard API may not be available */
+      setIsRunning(true);
+      const res = await fetch(`${API}/api/agent/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repoOwner, repoName, instructions }),
+      });
+      const data = await res.json();
+      setActiveJobId(data.jobId);
+      setView('job');
+      fetchJobs();
+    } catch (e) {
+      setIsRunning(false);
+      console.error('Launch error:', e.message);
     }
-  };
+  }, [customRepo, selectedRepo, fetchJobs]);
 
-  /* Log icon helper */
-  const logIcon = (type) => {
-    if (type === 'success') return <CheckCircle size={13} color="var(--success-color)" />;
-    if (type === 'error') return <XCircle size={13} color="var(--error-color)" />;
-    if (type === 'warning') return <AlertTriangle size={13} color="var(--warning-color)" />;
-    return <Zap size={13} color="var(--accent-color)" />;
-  };
+  const completedJobs = jobs.filter(j => j.status === 'completed').length;
+  const failedJobs    = jobs.filter(j => j.status === 'failed').length;
+  const totalJobs     = jobs.length;
 
-  /* ── Render ─────────────────────────────────────────── */
   return (
-    <div className="app-container">
-
-      {/* ── Header ── */}
-      <header className="header">
+    <div className="app">
+      {/* Header */}
+      <div className="header">
         <div className="header-logo">
-          <Bot size={40} />
-          <div>
-            <h1>Quantum Code Agent</h1>
-            <p>Autonomous AI Developer Platform · MERN Stack</p>
-          </div>
+          <Bot size={28} color="#58a6ff" />
+          <h1>Quantum AI Agent</h1>
+          <span style={{ fontSize: '0.7rem', background: 'rgba(88,166,255,0.15)', color: '#58a6ff', padding: '2px 8px', borderRadius: 12, fontWeight: 700 }}>
+            AUTONOMOUS
+          </span>
         </div>
-        <div className="header-status">
-          <div className={`status-pill ${connected ? '' : 'pill-error'}`}>
-            {connected ? <Wifi size={12} /> : <WifiOff size={12} />}
-            {connected ? 'Backend Live' : 'Disconnected'}
-          </div>
-          <div className="status-pill">
-            <RefreshCw size={12} className={isRunning ? 'spin' : ''} />
-            {isRunning ? 'Agent Running' : 'Cron Active (5min)'}
-          </div>
-          <div className="status-pill">
-            <Database size={12} />
-            MongoDB + Pinecone
-          </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          {connected
+            ? <><Wifi size={14} color="#3fb950" /><span style={{ color: '#3fb950', fontSize: '0.8rem' }}>Live</span></>
+            : <><WifiOff size={14} color="#f85149" /><span style={{ color: '#f85149', fontSize: '0.8rem' }}>Offline</span></>
+          }
         </div>
-      </header>
-
-      {/* ── Stats ── */}
-      <div className="stats-row">
-        <StatCard icon={Activity} label="Total Jobs" value={stats.total} color="#4a9df8" />
-        <StatCard icon={CheckCircle} label="Completed" value={stats.completed} color="#2da44e" />
-        <StatCard icon={GitCommit} label="PRs Opened" value={stats.prs} color="#a371f7" />
-        <StatCard icon={Cpu} label="LLM Chain" value="Groq → Llama" color="#d4a72c" />
       </div>
 
-      {/* ── Repos + Control ── */}
-      <div className="two-col">
+      {/* Nav tabs */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' }}>
+        {['dashboard', 'job'].map(v => (
+          <button
+            key={v}
+            onClick={() => setView(v)}
+            className={`fetch-btn ${view === v ? '' : 'clear-btn'}`}
+            style={{ fontSize: '0.8rem' }}
+          >
+            {v === 'dashboard' ? <><FolderSync size={13} /> Dashboard</> : <><Terminal size={13} /> Active Job</>}
+          </button>
+        ))}
+        {activeJobId && (
+          <a
+            href={`https://github.com/${selectedRepo}/pulls`}
+            target="_blank"
+            rel="noreferrer"
+            className="clear-btn"
+            style={{ fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.25rem 0.65rem', textDecoration: 'none' }}
+          >
+            <GitBranch size={13} /> View PR
+          </a>
+        )}
+      </div>
 
-        {/* Repos */}
-        <div className="glass-panel">
-          <h2 className="panel-title"><GitBranch size={16} /> Tracked Repositories</h2>
-          <div className="repo-list">
-            {REPOS.map(r => (
-              <div key={r} onClick={() => !isRunning && setSelectedRepo(r)} style={{ cursor: isRunning ? 'default' : 'pointer' }}>
-                <RepoCard repo={r} isActive={selectedRepo === r || activeRepo === r} />
+      {view === 'dashboard' && (
+        <>
+          {/* Stats */}
+          <div className="stats-row">
+            <StatCard icon={Database}   label="Total Jobs"    value={totalJobs}     color="#58a6ff" />
+            <StatCard icon={CheckCircle} label="Completed"    value={completedJobs} color="#3fb950" />
+            <StatCard icon={XCircle}    label="Failed"        value={failedJobs}    color="#f85149" />
+            <StatCard icon={Cpu}        label="Agent Status"  value={isRunning ? 'Running' : 'Idle'} color={isRunning ? '#d29922' : '#3fb950'} />
+          </div>
+
+          <div className="two-col">
+            {/* Left: Repos + Chat */}
+            <div>
+              <div className="panel">
+                <div className="panel-header">
+                  <GitBranch size={15} />
+                  <span>Target Repository</span>
+                </div>
+                {REPOS.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                    {REPOS.map(r => (
+                      <div key={r} onClick={() => setSelectedRepo(r)} style={{ cursor: 'pointer' }}>
+                        <RepoCard repo={r} isActive={selectedRepo === r && isRunning} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <input
+                  className="repo-input"
+                  placeholder="Or paste any GitHub URL / owner/repo"
+                  value={customRepo}
+                  onChange={e => setCustomRepo(e.target.value)}
+                  style={{ marginBottom: '0.75rem' }}
+                />
               </div>
-            ))}
-          </div>
-        </div>
 
-        {/* Control Panel */}
-        <div className="glass-panel">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-            <h2 className="panel-title" style={{ margin: 0 }}><Sparkles size={16} /> Planning Chat</h2>
-            <button
-              className={`fetch-btn ${isRunning ? 'btn-running' : ''}`}
-              onClick={() => startAgent('Deep research and upgrade.')}
-              disabled={isRunning || !selectedRepo}
-              title="Skip chat and run Phase 1-6 immediately"
-            >
-              <FolderSync size={14} />
-              <span>{isRunning ? 'Running...' : 'Fetch & Run'}</span>
-            </button>
-          </div>
-
-          {selectedRepo ? (
-            <PlanningChat
-              repository={selectedRepo}
-              onResolved={startAgent}
-              isAgentRunning={isRunning}
-            />
-          ) : (
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Select a repository to start planning.</p>
-          )}
-        </div>
-      </div>
-
-      {/* ── Live Terminal ── (always rendered) */}
-      <div className="glass-panel terminal-panel">
-        <div className="terminal-header">
-          <h2 className="panel-title" style={{ margin: 0 }}>
-            <Terminal size={16} /> Live Agent Terminal
-          </h2>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            {isRunning && <span className="live-badge">● LIVE</span>}
-            {!isRunning && logs.length > 0 && <span className="done-badge">✓ Done</span>}
-            {logs.length > 0 && (
-              <button
-                type="button"
-                className="clear-btn"
-                onClick={copyLogs}
-                title="Copy all logs to clipboard"
-                style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
-              >
-                {copied ? <ClipboardCheck size={13} /> : <Copy size={13} />}
-                {copied ? 'Copied!' : 'Copy'}
-              </button>
-            )}
-            {logs.length > 0 && (
-              <button
-                type="button"
-                className="clear-btn"
-                onClick={() => setLogs([])}
-              >Clear</button>
-            )}
-          </div>
-        </div>
-
-        <div className="terminal-body" style={{ marginTop: '1rem' }}>
-          {logs.length === 0 && !isRunning ? (
-            <div className="terminal-placeholder">
-              <Terminal size={28} opacity={0.2} />
-              <p>Waiting for agent activity…<br />
-                <span>Planning Chat above determines the goal.</span>
-              </p>
+              <div className="panel">
+                <div className="panel-header">
+                  <Sparkles size={15} />
+                  <span>Instruct the Agent</span>
+                </div>
+                <PlanningChat
+                  repository={customRepo.trim() || selectedRepo}
+                  onResolved={launchAgent}
+                  isAgentRunning={isRunning}
+                />
+                <button
+                  className="fetch-btn"
+                  style={{ marginTop: '0.75rem', width: '100%', justifyContent: 'center' }}
+                  onClick={() => launchAgent('Analyze the codebase. Fix bugs, improve code quality, add useful comments, and apply best-practice improvements.')}
+                  disabled={isRunning || (!customRepo.trim() && !selectedRepo)}
+                >
+                  {isRunning
+                    ? <><span className="loader" /> Agent Running...</>
+                    : <><Zap size={14} /> Run Full Autonomous Agent</>
+                  }
+                </button>
+              </div>
             </div>
-          ) : (
-            logs.map((log, i) => (
-              <div key={i} className={`log-item ${log.type || 'info'}`}>
-                <span className="log-icon">{logIcon(log.type)}</span>
-                <span className="log-time">
-                  {new Date(log.timestamp).toLocaleTimeString([], { hour12: false })}
-                </span>
-                <span className="log-message">{log.message}</span>
-              </div>
-            ))
-          )}
-          <div ref={logsEndRef} />
-        </div>
-      </div>
 
-      {/* ── Job History ── */}
-      {jobs.length > 0 && (
-        <div className="glass-panel">
-          <h2 className="panel-title"><Clock size={16} /> Job History</h2>
-          <div className="job-table-wrapper">
-            <table className="job-table">
-              <thead>
-                <tr>
-                  <th>Status</th>
-                  <th>Repos</th>
-                  <th>Branch / PR</th>
-                  <th>Started</th>
-                </tr>
-              </thead>
-              <tbody>
-                {jobs.slice(0, 12).map(job => (
-                  <tr key={job._id}>
-                    <td><StatusBadge status={job.status} /></td>
-                    <td className="td-repo">
-                      <span style={{ color: 'var(--text-muted)' }}>{job.repoOwner}/</span>
-                      <span style={{ fontWeight: 600 }}>{job.repoName}</span>
-                    </td>
-                    <td className="td-branch">{job.tempBranch || '—'}</td>
-                    <td className="td-time">{new Date(job.createdAt).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {/* Right: Job History + Live Feed */}
+            <div>
+              <div className="panel">
+                <div className="panel-header">
+                  <Activity size={15} />
+                  <span>Recent Jobs</span>
+                  <button className="clear-btn" onClick={fetchJobs}><RefreshCw size={11} /></button>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {jobs.slice(0, 6).map(job => (
+                    <div
+                      key={job._id}
+                      onClick={() => { setActiveJobId(job._id); setView('job'); }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '0.75rem',
+                        padding: '0.6rem 0.75rem', borderRadius: 8, cursor: 'pointer',
+                        background: activeJobId === job._id ? 'rgba(88,166,255,0.08)' : 'transparent',
+                        border: `1px solid ${activeJobId === job._id ? 'rgba(88,166,255,0.3)' : 'transparent'}`,
+                        transition: 'all 0.15s'
+                      }}
+                    >
+                      <GitCommit size={13} color="#58a6ff" style={{ flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '0.82rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {job.repoOwner}/{job.repoName}
+                        </div>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {job.instructions?.substring(0, 60)}...
+                        </div>
+                      </div>
+                      <StatusBadge status={job.status} />
+                    </div>
+                  ))}
+                  {jobs.length === 0 && (
+                    <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                      No jobs yet. Launch the agent above.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="panel">
+                <div className="panel-header">
+                  <Zap size={15} />
+                  <span>Global Activity Feed</span>
+                </div>
+                <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  {globalLogs.slice(0, 20).map((log, i) => (
+                    <div key={i} style={{ fontSize: '0.78rem', color: log.type === 'success' ? 'var(--success-color)' : log.type === 'error' ? 'var(--error-color)' : 'var(--text-muted)' }}>
+                      {log.message?.substring(0, 80)}
+                    </div>
+                  ))}
+                  {globalLogs.length === 0 && (
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', padding: '0.5rem 0' }}>Waiting for activity...</div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
+        </>
       )}
 
+      {view === 'job' && (
+        <div className="panel">
+          <div className="panel-header">
+            <Terminal size={15} />
+            <span>Job Details — {activeJobId ? activeJobId.toString().slice(-8) : 'None'}</span>
+            {isRunning && <span className="live-badge">LIVE</span>}
+          </div>
+          {activeJobId
+            ? <JobDetail jobId={activeJobId} />
+            : <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>No active job selected.</div>
+          }
+        </div>
+      )}
     </div>
   );
 }
