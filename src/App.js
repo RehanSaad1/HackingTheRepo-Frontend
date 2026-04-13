@@ -152,7 +152,6 @@ export default function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [connected, setConnected] = useState(false);
   const [jobs, setJobs] = useState([]);
-  const [currentAction, setCurrentAction] = useState('');
   const [activeRepo, setActiveRepo] = useState(null);
   const [stats, setStats] = useState({ total: 0, completed: 0, prs: 0 });
   const [copied, setCopied] = useState(false);
@@ -211,18 +210,19 @@ export default function App() {
         return [...prev, entry];
       });
 
-      setCurrentAction(entry.message);
 
       /* Detect which repo is active */
-      const m = entry.message.match(/━━━ ([^\/]+\/[^\s]+) ━━━/);
-      if (m) setActiveRepo(m[1].trim());
+      const parts = entry.message.split('??');
+      if (parts.length >= 2) {
+        const repoMatch = parts[1].trim().match(/([^/\s]+\/[^\s]+)/);
+        if (repoMatch) setActiveRepo(repoMatch[1]);
+      }
 
       /* Job lifecycle signals */
       if (entry.message.includes('Agent started')) setIsRunning(true);
 
       if (entry.message.includes('Job complete')) {
         setIsRunning(false);
-        setCurrentAction('');
         setActiveRepo(null);
         fetchJobs();
       }
@@ -235,7 +235,6 @@ export default function App() {
   const startAgent = async (finalInstructions) => {
   setIsRunning(true);
   setLogs([]);
-  setCurrentAction('Initializing agent...');
   try {
     const repoUrl = `https://github.com/${selectedRepo}`;
     const res = await fetch(`${API}/api/analyze`, {
@@ -252,7 +251,6 @@ export default function App() {
   } catch (err) {
     setLogs([{ message: err.message, type: 'error', timestamp: new Date().toISOString() }]);
     setIsRunning(false);
-    setCurrentAction('');
   }
 };
 
